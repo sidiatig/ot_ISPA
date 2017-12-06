@@ -96,7 +96,7 @@ def gridsearch(x, y_target, subjects, cross_v, experiment, clf_method,
 
 def gridsearch_persub(xs, ys, xt, yt, clf_method='logis',njobs=3):
     svm_parameters = [{'kernel': ['linear'],
-                       'C': [10, 1, 0.1, 0.01, 0.001,
+                       'C': [100, 10, 1, 0.1, 0.01, 0.001,
                                0.0001, 0.00001]}]
     logis_parameters = [{'penalty': ['l1', 'l2'],
                          'C': [100, 10, 1, 0.1, 0.01, 0.001,
@@ -118,7 +118,7 @@ def gridsearch_persub(xs, ys, xt, yt, clf_method='logis',njobs=3):
 
 
 
-def pairsubs_sinkhorn_lables(xs, ys, xt, ot_method='l1l2', metric='hausdorff'):
+def pairsubs_sinkhorn_lables(xs, ys, xt, ot_method='l1l2', metric='hausdorff', clf_method='logis'):
     # metric:  ‘braycurtis’, ‘canberra’, ‘chebyshev’, ‘cityblock’, ‘correlation’,
     # ‘cosine’, ‘dice’, ‘euclidean’, ‘hamming’, ‘jaccard’, ‘kulsinski’,
     # ‘mahalanobis’, ‘matching’, ‘minkowski’, ‘rogerstanimoto’, ‘russellrao’,
@@ -130,7 +130,7 @@ def pairsubs_sinkhorn_lables(xs, ys, xt, ot_method='l1l2', metric='hausdorff'):
     # when reg is larger than 1, xst is too compacted
     regs = [1e-2, 1e-1, 1, 10]
     # etas = [1e-4, 3e-4, 1e-3, 3e-3,1e-2, 3e-2, 1e-1, 3e-1, 1]
-    etas = [1e-4, 1e-3,1e-2, 1e-1, 1]
+    etas = [1e-3,1e-2, 1e-1, 1,10]
     best_dist = 0
     if ot_method == 'l1l2':
         transport = ot.da.SinkhornL1l2Transport
@@ -149,11 +149,13 @@ def pairsubs_sinkhorn_lables(xs, ys, xt, ot_method='l1l2', metric='hausdorff'):
                 dic1 = directed_hausdorff(xst, xt)[0]
                 dic2 = directed_hausdorff(xt, xst)[0]
                 dist = max(dic1, dic2)
+                print('reg,eta,dist', reg, eta, dist)
             elif metric == 'h':
-
-                dist = h_divergence(xs, xt, xst)
+                dist = 1-np.mean(h_divergence(xs, xt, xst, clf_method=clf_method))
+                print('reg,eta,dist',reg,eta,dist)
             else:
                 dist = np.sum(cdist(xst, xt, metric=metric))
+                print('reg,eta,dist', reg, eta, dist)
             if best_dist == 0:
                 best_dist = dist
                 best_params = (reg, eta)
@@ -164,7 +166,7 @@ def pairsubs_sinkhorn_lables(xs, ys, xt, ot_method='l1l2', metric='hausdorff'):
                 best_xst = xst
     return best_xst, best_params
 
-def h_divergence(xs,xt,xst):
+def h_divergence(xs,xt,xst,clf_method='logis'):
     y_xs = np.ones(xs.shape[0], dtype=int)
     y_xt = np.zeros(xt.shape[0],dtype=int)
     x = np.vstack((xs,xt))
@@ -172,10 +174,10 @@ def h_divergence(xs,xt,xst):
     # xst has the same labels as xt
     # if acc is low, it means that xst isn't similar to xt.
     # the higher the acc is, the more similar the xst is to xt.
-    # xst with the highest acc should be choose
-    xst_acc = get_accuracy(x, y, xst, y_xt, clf_method='logis')
+    # xst with the highest acc should be chosen
+    xst_accs = get_accuracy(x, y, xst, y_xt, clf_method=clf_method)
 
-    return 1-xst_acc
+    return xst_accs
 
 def get_accuracy(xs, ys, xt, yt, clf_method='logis'):
     accs = []
@@ -185,41 +187,41 @@ def get_accuracy(xs, ys, xt, yt, clf_method='logis'):
         y_train = ys[train]
         grid_best, grid_csv, acc = gridsearch_persub(x_train,y_train,xt,yt,clf_method=clf_method)
         print('gridsearch best params', grid_best)
+        # print(grid_csv)
         accs.append(acc)
-    mean_acc = np.mean(accs)
-    return mean_acc
+    return accs
 
-def pairsubs_sinkhorn(xs, xt, metric="hausdorff"):
-    # use different sets of reg to transport source with sinkhorn,
-    # find the best transport source based on hausdorff distance
-    # reg can't be too small, otherwise K will be 0
-
-    regs = [1e-3, 1e-2, 1e-1, 1, 10]
-    best_dist = 0
-
-    transport = ot.da.SinkhornTransport
-    for reg in regs:
-        print('reg:{}'.format(reg))
-        trans_fuc = transport(reg_e=reg, norm='max')
-        trans_fuc.fit(Xs=xs, Xt=xt)
-        xst = trans_fuc.transform(Xs=xs)
-        if metric=='hausdorff':
-            dic1 = directed_hausdorff(xst, xt)[0]
-            dic2 = directed_hausdorff(xt, xst)[0]
-            dist = max(dic1, dic2)
-        else:
-            dist = np.sum(cdist(xst,xt, metric=metric))
-        if best_dist == 0:
-            best_dist = dist
-            best_params = reg
-            best_xst = xst
-        if dist < best_dist:
-            best_dist = dist
-            best_params = reg
-            best_xst = xst
-    return best_xst, best_params
-
-
+# def pairsubs_sinkhorn(xs, xt, metric="hausdorff"):
+#     # use different sets of reg to transport source with sinkhorn,
+#     # find the best transport source based on hausdorff distance
+#     # reg can't be too small, otherwise K will be 0
+#
+#     regs = [1e-3, 1e-2, 1e-1, 1, 10]
+#     best_dist = 0
+#
+#     transport = ot.da.SinkhornTransport
+#     for reg in regs:
+#         print('reg:{}'.format(reg))
+#         trans_fuc = transport(reg_e=reg, norm='max')
+#         trans_fuc.fit(Xs=xs, Xt=xt)
+#         xst = trans_fuc.transform(Xs=xs)
+#         if metric=='hausdorff':
+#             dic1 = directed_hausdorff(xst, xt)[0]
+#             dic2 = directed_hausdorff(xt, xst)[0]
+#             dist = max(dic1, dic2)
+#         else:
+#             dist = np.sum(cdist(xst,xt, metric=metric))
+#         if best_dist == 0:
+#             best_dist = dist
+#             best_params = reg
+#             best_xst = xst
+#         if dist < best_dist:
+#             best_dist = dist
+#             best_params = reg
+#             best_xst = xst
+#     return best_xst, best_params
+#
+#
 
 
 
