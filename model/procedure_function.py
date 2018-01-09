@@ -7,15 +7,17 @@ sys.path.append(main_dir)
 
 import numpy as np
 from scipy.spatial.distance import directed_hausdorff, cdist
+import scipy.stats as stats
 import pandas as pd
 import ot
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import GridSearchCV, LeaveOneGroupOut, GroupKFold, StratifiedKFold
+from sklearn.model_selection import GridSearchCV, LeaveOneGroupOut, \
+    GroupKFold, StratifiedKFold, RepeatedStratifiedKFold, StratifiedShuffleSplit
 from sklearn.externals import joblib
-
+from sklearn.neighbors import KNeighborsClassifier
 
 def shuffle_data(x,y,nb_persub):
     # shuffle each subject's data
@@ -95,30 +97,34 @@ def gridsearch(x, y_target, subjects, cross_v, experiment, clf_method,
     return score_op
 
 def gridsearch_persub(xs, ys, xt, yt, clf_method='logis',njobs=3):
-    svm_parameters = [{'kernel': ['linear'],
-                       'C': [100, 10, 1, 0.1, 0.01, 0.001,
-                               0.0001, 0.00001]}]
-    logis_parameters = [{'penalty': ['l1', 'l2'],
-                         'C': [100, 10, 1, 0.1, 0.01, 0.001,
-                               0.0001, 0.00001]}]
-    clf = LogisticRegression if clf_method == 'logis' else SVC
-    params = logis_parameters if clf_method == 'logis' else svm_parameters
+    if clf_method != 'knn':
+        svm_parameters = [{'kernel': ['linear'],
+                           'C': [100, 10, 1, 0.1, 0.01, 0.001,
+                                   0.0001, 0.00001]}]
+        logis_parameters = [{'penalty': ['l1', 'l2'],
+                             'C': [100, 10, 1, 0.1, 0.01, 0.001,
+                                   0.0001, 0.00001]}]
+        clf = LogisticRegression if clf_method == 'logis' else SVC
+        params = logis_parameters if clf_method == 'logis' else svm_parameters
 
-    skf = StratifiedKFold(n_splits=10)
-    grid_cv = list(skf.split(xs, ys))
-    grid_clf = GridSearchCV(clf(), params, cv=grid_cv, n_jobs=njobs)
-    grid_clf.fit(xs, ys)
-    grid_best = grid_clf.best_params_
-    grid_csv = pd.DataFrame.from_dict(grid_clf.cv_results_)
-    pre = grid_clf.predict(xt)
-    score_op = accuracy_score(yt, pre)
-    return grid_best, grid_csv, score_op
+        skf = StratifiedKFold(n_splits=10)
+        grid_cv = list(skf.split(xs, ys))
+        grid_clf = GridSearchCV(clf(), params, cv=grid_cv, n_jobs=njobs)
+        grid_clf.fit(xs, ys)
+        grid_best = grid_clf.best_params_
+        grid_csv = pd.DataFrame.from_dict(grid_clf.cv_results_)
+        pre = grid_clf.predict(xt)
+        score_op = accuracy_score(yt, pre)
+        return grid_best, grid_csv, score_op, pre
+    else:
+        neigh = KNeighborsClassifier(n_neighbors=1)
+        neigh.fit(xs, ys)
+        pre = neigh.predict(xt)
+        score_op = accuracy_score(yt, pre)
+        return 0, 0, score_op, pre
 
 
-
-
-
-def pairsubs_sinkhorn_lables(xs, ys, xt, ot_method='l1l2', metric='hausdorff', clf_method='logis'):
+def pairsubs_sinkhorn_lables_h(xs, ys, xt, ot_method='l1l2', clf_method='logis'):
     # metric:  ‘braycurtis’, ‘canberra’, ‘chebyshev’, ‘cityblock’, ‘correlation’,
     # ‘cosine’, ‘dice’, ‘euclidean’, ‘hamming’, ‘jaccard’, ‘kulsinski’,
     # ‘mahalanobis’, ‘matching’, ‘minkowski’, ‘rogerstanimoto’, ‘russellrao’,
@@ -128,70 +134,216 @@ def pairsubs_sinkhorn_lables(xs, ys, xt, ot_method='l1l2', metric='hausdorff', c
     # find the best transport source based on hausdorff distance
     # reg can't be too small, otherwise K will be 0
     # when reg is larger than 1, xst is too compacted
-    regs = [1e-2, 1e-1, 1, 10]
-    # etas = [1e-4, 3e-4, 1e-3, 3e-3,1e-2, 3e-2, 1e-1, 3e-1, 1]
-    etas = [1e-3,1e-2, 1e-1, 1,10]
-    best_dist = 0
+    regs = [1e-3, 1e-2, 1e-1, 1, 10, 100]
+    etas = [1e-3, 1e-2, 1e-1, 1, 10, 100]
+    # regs = [1e-2, 1e-1]
+    # etas = [ 1e-1]
     if ot_method == 'l1l2':
         transport = ot.da.SinkhornL1l2Transport
     elif ot_method == 'lpl1':
         transport = ot.da.SinkhornLpl1Transport
     else:
         print('Warning: need to choose between "l1l2" and "lpl1" ', ot_method)
-
+    params_acc= {'params':[], 'acc':[] }
+    best_dist = -1
     for reg in regs:
         for eta in etas:
-            # print('reg:{}, eta:{}'.format(reg,eta))
+            print('reg:{}, eta:{}'.format(reg,eta))
             trans_fuc = transport(reg_e=reg, reg_cl=eta, norm='max')
             trans_fuc.fit(Xs=xs, Xt=xt, ys=ys)
             xst = trans_fuc.transform(Xs=xs)
-            if metric == 'hausdorff':
-                dic1 = directed_hausdorff(xst, xt)[0]
-                dic2 = directed_hausdorff(xt, xst)[0]
-                dist = max(dic1, dic2)
-                print('reg,eta,dist', reg, eta, dist)
-            elif metric == 'h':
-                dist = 1-np.mean(h_divergence(xs, xt, xst, clf_method=clf_method))
-                print('reg,eta,dist',reg,eta,dist)
-            else:
-                dist = np.sum(cdist(xst, xt, metric=metric))
-                print('reg,eta,dist', reg, eta, dist)
-            if best_dist == 0:
-                best_dist = dist
-                best_params = (reg, eta)
-                best_xst = xst
-            if dist < best_dist:
-                best_dist = dist
-                best_params = (reg, eta)
-                best_xst = xst
-    return best_xst, best_params
+            accs = h_divergence(xst, xt, clf_method=clf_method)
+            dist = np.mean(accs)
+            params_acc['params'].append([reg, eta])
+            params_acc['acc'].append(dist)
+            print('reg,eta, h dist', reg, eta, dist)
+            if best_dist == -1:
+                if dist >= 0:
+                    best_dist = dist
+                    best_accs = accs
+                    best_params = (reg,eta)
+                    best_xst = xst
+            elif dist >= 0:
+                ttest = stats.ttest_rel(best_accs, accs)
+                if ttest.statistic > 0:
+                    best_accs = accs
+                    best_params = (reg, eta)
+                    best_xst = xst
+    params_acc['params'] = np.asarray(params_acc['params'])
+    params_acc['acc'] = np.asarray(params_acc['acc'])
+    print('best reg and eta', best_params)
+    return best_xst, best_params, params_acc
 
-def h_divergence(xs,xt,xst,clf_method='logis'):
-    y_xs = np.ones(xs.shape[0], dtype=int)
+def h_divergence(xst, xt, clf_method='logis'):
+    # train a classifier to distinguish xst and xt,
+    # classifier is trained on each pair of xst and xt,
+    # take xst and xt as two classes within one subject,
+    # use multi splits within subject to get a set of accuracies,
+    # t test between different sets of accuracies,
+    # the average acc of a set should be close to 0.5
+    y_xst = np.ones(xst.shape[0], dtype=int)
     y_xt = np.zeros(xt.shape[0],dtype=int)
-    x = np.vstack((xs,xt))
-    y = np.concatenate((y_xs,y_xt))
-    # xst has the same labels as xt
-    # if acc is low, it means that xst isn't similar to xt.
-    # the higher the acc is, the more similar the xst is to xt.
-    # xst with the highest acc should be chosen
-    xst_accs = get_accuracy(x, y, xst, y_xt, clf_method=clf_method)
-
-    return xst_accs
-
-def get_accuracy(xs, ys, xt, yt, clf_method='logis'):
+    x = np.vstack((xst,xt))
+    y = np.concatenate((y_xst,y_xt))
     accs = []
-    skf = StratifiedKFold(n_splits=10)
-    for train, test in skf.split(xs,ys):
+    rskf = RepeatedStratifiedKFold(n_splits=10, n_repeats=5)
+    for train, test in rskf.split(x, y):
+        x_train = x[train]
+        y_train = y[train]
+        x_test = x[test]
+        y_test = y[test]
+        grid_best, grid_csv, acc, _ = gridsearch_persub(x_train, y_train,
+                                                     x_test, y_test,
+                                                     clf_method=clf_method)
+        # print('gridsearch for h, best classifier params', grid_best)
+        # print(grid_csv)
+        accs.append(acc-0.5)
+    return accs
+
+def get_accuracy(xs, ys, xt, yt, n_spl=10, n_rep=1, clf_method='logis'):
+    # train a clf on part of (xs,ys), get acc on xt,
+    # do it for several times, average all the accs to get the final acc and return
+    # if the train data is small, must use more splits to make the results more rebust
+    accs = []
+    rskf = RepeatedStratifiedKFold(n_splits=n_spl, n_repeats=n_rep)
+    for train, test in rskf.split(xs,ys):
         x_train = xs[train]
         y_train = ys[train]
-        grid_best, grid_csv, acc = gridsearch_persub(x_train,y_train,xt,yt,clf_method=clf_method)
-        print('gridsearch best params', grid_best)
+        grid_best, grid_csv, acc, _ = gridsearch_persub(x_train,y_train,xt,yt,clf_method=clf_method)
+        # print('gridsearch best params', grid_best)
         # print(grid_csv)
         accs.append(acc)
     return accs
 
-# def pairsubs_sinkhorn(xs, xt, metric="hausdorff"):
+def acc_circular(x1, y1, x2, y2, xt, yt, reg, eta, ot_method='maplin', clf_method='logis'):
+    if ot_method == 'l1l2':
+        transport = ot.da.SinkhornL1l2Transport(reg_e=reg, reg_cl=eta, norm='max')
+    elif ot_method == 'lpl1':
+        transport = ot.da.SinkhornLpl1Transport(reg_e=reg, reg_cl=eta, norm='max')
+    elif ot_method == 'maplin':
+        transport = ot.da.MappingTransport(kernel="linear", mu=reg, eta=eta, bias=True, norm='max')
+    else:
+        print('Warning: need to choose among "l1l2", "lpl1" and "maplin"', ot_method)
+    transport.fit(Xs=x1, Xt=xt, ys=y1)
+    xst1 = transport.transform(Xs=x1)
+    xst2 = transport.transform(Xs=x2)
+    _, _, _, yt1 = gridsearch_persub(xst1, y1, xt, yt, clf_method=clf_method)
+    acc = np.mean(get_accuracy(xt, yt1, xst2, y2, clf_method=clf_method))
+    return acc
+
+def circular_val(xs, ys, xt, yt, reg, eta, ot_method='maplin', clf_method='logis'):
+    sss = StratifiedShuffleSplit(n_splits=5, test_size=0.5, random_state=0)
+    s1s = []
+    s2s = []
+    for train_index, test_index in sss.split(xs, ys):
+        xs1, xs2 = xs[train_index], xs[test_index]
+        ys1, ys2 = ys[train_index], ys[test_index]
+        s1 = acc_circular(xs1, ys1, xs2, ys2, xt, yt, reg, eta, ot_method=ot_method, clf_method=clf_method)
+        s2 = acc_circular(xs2, ys2, xs1, ys1, xt, yt, reg, eta, ot_method=ot_method, clf_method=clf_method)
+        s1s.append(s1)
+        s2s.append(s2)
+    s1_mean = np.mean(s1s)
+    s2_mean = np.mean(s2s)
+    print('s1,s2', s1_mean, s2_mean)
+    return (s1_mean + s2_mean)/2
+
+
+def pairsubs_circular(xs, ys, xt, yt, ot_method='maplin', clf_method='logis'):
+
+    regs = [1e-3, 1e-2, 1e-1, 1, 10, 100]
+    etas = [1e-3, 1e-2, 1e-1, 1, 10, 100]
+    # regs = [1e-3]
+    # etas = [1, 10, 100]
+    best_acc = 0
+    for reg in regs:
+        for eta in etas:
+            print('reg:{}, eta:{}'.format(reg, eta))
+            s = circular_val(xs, ys, xt, yt, reg, eta, ot_method=ot_method, clf_method=clf_method)
+            print('reg,eta, circular acc', reg, eta, s)
+            if best_acc == 0:
+                best_acc = s
+                best_params = (reg, eta)
+            else:
+                if s > best_acc:
+                    best_acc = s
+                    best_params = (reg, eta)
+
+    return best_params
+
+# def acc_circular_kfold(x1, y1, x2, y2, xt, yt, reg, eta, ot_method='maplin', clf_method='logis'):
+#     if ot_method == 'l1l2':
+#         transport = ot.da.SinkhornL1l2Transport(reg_e=reg, reg_cl=eta, norm='max')
+#     elif ot_method == 'lpl1':
+#         transport = ot.da.SinkhornLpl1Transport(reg_e=reg, reg_cl=eta, norm='max')
+#     elif ot_method == 'maplin':
+#         transport = ot.da.MappingTransport(kernel="linear", mu=reg, eta=eta, bias=True, norm='max')
+#     else:
+#         print('Warning: need to choose among "l1l2", "lpl1" and "maplin"', ot_method)
+#     transport.fit(Xs=x1, Xt=xt, ys=y1)
+#     xst1 = transport.transform(Xs=x1)
+#     xst2 = transport.transform(Xs=x2)
+#     _, _, _, yt1 = gridsearch_persub(xst1, y1, xt, yt, clf_method=clf_method)
+#     _, _, acc, _ = gridsearch_persub(xt, yt1, xst2, y2, clf_method=clf_method)
+#     return acc
+
+def circular_val_kfold(xs, ys, xt, yt, reg, eta, ot_method='maplin', clf_method='logis'):
+    if ot_method=='maplin':
+        skf = StratifiedKFold(n_splits=10)
+        ss = []
+        for train_index, test_index in skf.split(xs, ys):
+            xs1, xs2 = xs[train_index], xs[test_index]
+            ys1, ys2 = ys[train_index], ys[test_index]
+            acc = acc_circular(xs1, ys1, xs2, ys2, xt, yt, reg, eta, ot_method=ot_method, clf_method=clf_method)
+            ss.append(acc)
+        s_mean = np.mean(ss)
+        print('s_mean', s_mean)
+        return s_mean
+    else:
+        if ot_method == 'l1l2':
+            transport = ot.da.SinkhornL1l2Transport(reg_e=reg, reg_cl=eta, norm='max')
+        elif ot_method == 'lpl1':
+            transport = ot.da.SinkhornLpl1Transport(reg_e=reg, reg_cl=eta, norm='max')
+        elif ot_method == 'maplin':
+            transport = ot.da.MappingTransport(kernel="linear", mu=reg, eta=eta, bias=True, norm='max')
+        else:
+            print('Warning: need to choose among "l1l2", "lpl1" and "maplin"', ot_method)
+        transport.fit(Xs=x1, Xt=xt, ys=y1)
+        xst1 = transport.transform(Xs=x1)
+        xst2 = transport.transform(Xs=x2)
+        _, _, _, yt1 = gridsearch_persub(xst1, y1, xt, yt, clf_method=clf_method)
+        acc = np.mean(get_accuracy(xt, yt1, xst2, y2, clf_method=clf_method))
+
+
+def pairsubs_circular_kfold(xs, ys, xt, yt, ot_method='maplin', clf_method='logis'):
+    # separate xs into to 2 parts based on 10 kfolds,
+    # use the first part xs1 and xt to learn xst1,
+    # use xst1 to learn a clf then predict on xt, get the predictions yt1
+    # use xt, yt1 to learn 2-nd clf, use it to predict on xst2, get acc of xst2
+    # use mean acc from those 10 kfolds to choose best reg and eta
+    regs = [1e-3, 1e-2, 1e-1, 1, 10, 100]
+    etas = [1e-3, 1e-2, 1e-1, 1, 10, 100]
+    # regs = [1e-3]
+    # etas = [ 1, 10, 100]
+    best_acc = 0
+    for reg in regs:
+        for eta in etas:
+            print('reg:{}, eta:{}'.format(reg, eta))
+            s = circular_val_kfold(xs, ys, xt, yt, reg, eta, ot_method=ot_method, clf_method=clf_method)
+            print('reg,eta, circular kfold acc', reg, eta, s)
+            if best_acc == 0:
+                best_acc = s
+                best_params = (reg, eta)
+            else:
+                if s > best_acc:
+                    best_acc = s
+                    best_params = (reg, eta)
+    return best_params
+
+
+
+
+
+        # def pairsubs_sinkhorn(xs, xt, metric="hausdorff"):
 #     # use different sets of reg to transport source with sinkhorn,
 #     # find the best transport source based on hausdorff distance
 #     # reg can't be too small, otherwise K will be 0
