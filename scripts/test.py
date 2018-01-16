@@ -14,9 +14,7 @@ from sklearn.externals import joblib
 import scipy.stats as stats
 import numpy as np
 import time
-
 import ot
-
 
 print(time.strftime('%Y-%m-%d %A %X %Z', time.localtime(time.time())))
 
@@ -30,16 +28,16 @@ def main():
     # clf_method = args[2]
     # source_id = int(args[3])
     # target_id = int(args[4])
-    # op_function = args[5] # 'lpl1' 'l1l2'
+    # op_function = args[5] # 'lpl1' 'l1l2' 'maplin'
 
-    metric_xst = 'null'
+
 
     experiment = 'fmril'
-    nor_method = 'no'
-    clf_method = 'logis'
-    source_id = 1
+    nor_method = 'indi'
+    clf_method = 'svm'
+    source_id = 3
     target_id = 2
-    op_function = 'l1l2' # 'lpl1' 'l1l2'
+    op_function = 'maplin' # 'lpl1' 'l1l2'
 
     if experiment == 'fmril':
         source = fmril
@@ -53,10 +51,9 @@ def main():
     subjects = np.array(source.subjects)
     x_data = source.x_data_pow if experiment == 'meg' else source.x_data
     x_indi = source.x_indi_pow if experiment == 'meg' else source.x_indi
-    x = x_indi.copy() if nor_method == 'indi' else x_data.copy()
+    x = x_indi if nor_method == 'indi' else x_data
 
     indices_sub = fucs.split_subjects(subjects)
-    nb_subs = len(indices_sub)
 
     i = source_id
     j = target_id
@@ -64,61 +61,72 @@ def main():
     ys = y_target[indices_sub[i]]
     xt = x[indices_sub[j]]
     yt = y_target[indices_sub[j]]
-    note = '{}s_{}t_{}_{}_{}_sinkhorn_{}_{}'.format(i, j, experiment,
-                                                 nor_method, clf_method, op_function,metric_xst)
+    note = 'kfold_{}s_{}t_{}_{}_{}_{}_circulaire'.format(i, j, experiment,
+                                           nor_method, clf_method, op_function)
     print(note)
-    reg = 10
-    eta = 0.1
-    print('reg,eta',reg,eta)
-    transport = ot.da.SinkhornL1l2Transport
-    trans_fuc = transport(reg_e=reg, reg_cl=eta, norm='max')
-    trans_fuc.fit(Xs=xs, Xt=xt, ys=ys)
-    xst = trans_fuc.transform(Xs=xs)
-    # print('xst',xst,np.max(xst), np.min(xst),np.mean(xst))
-    # print('xs',xs,np.max(xs), np.min(xs),np.mean(xs))
-    # print('xt',xt,np.max(xt), np.min(xt),np.mean(xt))
-    xst_accs = fucs.h_divergence(xst, xt, clf_method=clf_method)
-    print(xst_accs)
-    print(np.mean(xst_accs))
-    # y_xs = np.ones(xs.shape[0], dtype=int)
-    # y_xt = np.zeros(xt.shape[0], dtype=int)
-    # x = np.vstack((xs, xt))
-    # print(x.shape)
-    # y = np.concatenate((y_xs, y_xt))
-    # print(y.shape)
-    # # xst has the same labels as xt
-    # # if acc is low, it means that xst isn't similar to xt.
-    # # the higher the acc is, the more similar the xst is to xt.
-    # # xst with the highest acc should be chosen
-    # xst_accs = fucs.get_accuracy(x, y, xst, y_xt, clf_method=clf_method)
-    # print('************************************************************************')
-    # xs_accs1 = fucs.get_accuracy(x, y, xs, y_xs, clf_method=clf_method)
-    # print('************************************************************************')
-    # xs_accs2 = fucs.get_accuracy(x, y, xs, y_xt, clf_method=clf_method)
-    # print('************************************************************************')
-    # xt_accs = fucs.get_accuracy(x, y, xt, y_xt, clf_method=clf_method)
-    # print('************************************************************************')
-    # print('xst_accs',np.mean(xst_accs),xst_accs)
-    # print('xs_accs1', np.mean(xs_accs1),xs_accs1)
-    # print('xs_accs2', np.mean(xs_accs2), xs_accs2)
-    # print('xt_accs', np.mean(xt_accs),xt_accs)
-    #
-    #
-    # x_base = x_indi.copy()
-    # xs_base = x_base[indices_sub[i]]
-    # ys_base = y_target[indices_sub[i]]
-    # xt_base = x_base[indices_sub[j]]
-    # yt_base = y_target[indices_sub[j]]
-    # base_accs = fucs.get_accuracy(xs_base, ys_base, xt_base, yt_base, clf_method=clf_method)
-    # print('base_accs',np.mean(base_accs), base_accs)
-    # xst_accs = fucs.get_accuracy(xst, ys, xt, yt, clf_method=clf_method)
-    # print('xst_accs', np.mean(xst_accs), xst_accs)
-    # print('reg,eta', reg, eta)
 
+    best_params, params_acc = fucs.pairsubs_circular_kfold(xs, ys, xt, yt, ot_method=op_function, clf_method=clf_method)
+    reg, eta = best_params
+    print('best reg and eta', reg, eta)
+    if op_function == 'l1l2':
+        transport = ot.da.SinkhornL1l2Transport(reg_e=reg, reg_cl=eta, norm='max')
+    elif op_function == 'lpl1':
+        transport = ot.da.SinkhornLpl1Transport(reg_e=reg, reg_cl=eta, norm='max')
+    elif op_function == 'maplin':
+        transport = ot.da.MappingTransport(kernel="linear", mu=reg, eta=eta, bias=True, norm='max')
+    else:
+        print('Warning: need to choose among "l1l2", "lpl1" and "maplin"', op_function)
+    # train on xst, test on xt
+    transport.fit(Xs=xs, Xt=xt, ys=ys)
+    xst = transport.transform(Xs=xs)
+    ot_accs = fucs.get_accuracy(xst, ys, xt, yt, clf_method=clf_method)
+    ot_score = np.mean(ot_accs)
+    print('train on ot source data, predict on original target, accuracy', ot_score, ot_accs)
+
+    # train on xs, test on xt
+    ori_accs = fucs.get_accuracy(xs, ys, xt, yt, clf_method=clf_method)
+    ori_score = np.mean(ori_accs)
+    print('train on original source data, predict on original target, accuracy', ori_score, ori_accs)
+    # train on xs indi-nor, test on xt indi-nor
+    x_base = x_indi.copy()
+    xs_base = x_base[indices_sub[i]]
+    ys_base = y_target[indices_sub[i]]
+    xt_base = x_base[indices_sub[j]]
+    yt_base = y_target[indices_sub[j]]
+    base_accs = fucs.get_accuracy(xs_base, ys_base, xt_base, yt_base, clf_method=clf_method)
+    base_score = np.mean(base_accs)
+    print('base: indi-normalized source predicts on indi-normalized target, accuracy', base_score, base_accs)
+
+    pair_params = {}
+    pair_params['source'] = i
+    pair_params['target'] = j
+    pair_params['ori_score'] = round(ori_score, 4)
+    pair_params['ori_accs'] = ori_accs
+    pair_params['ot_accs'] = ot_accs
+    pair_params['ot_score'] = round(ot_score, 4)
+    pair_params['base_accs'] = base_accs
+    pair_params['base_score'] = round(base_score, 4)
+    pair_params['params'] = (reg, eta)
+    pair_params['params_acc'] = params_acc
+    ttest_base_ot = stats.ttest_rel(base_accs,ot_accs)
+    pair_params['ttest_base_ot'] = (ttest_base_ot.pvalue, ttest_base_ot.statistic)
+    ttest_ori_ot = stats.ttest_rel(ori_accs, ot_accs)
+    pair_params['ttest_ori_ot'] = (ttest_ori_ot.pvalue, ttest_ori_ot.statistic)
+    print('pair_params', pair_params)
+    # if ttest_base_ot .statistic > 0:
+    #     joblib.dump(pair_params, result_dir+'/big_base/{}_pair_params.pkl'.format(note))
+    # else:
+    #     joblib.dump(pair_params, result_dir + '/small_base/{}_pair_params.pkl'.format(note))
+    # if ttest_ori_ot .statistic > 0:
+    #     joblib.dump(pair_params, result_dir+'/big_ori/{}_pair_params.pkl'.format(note))
+    # else:
+    #     joblib.dump(pair_params, result_dir + '/small_ori/{}_pair_params.pkl'.format(note))
+
+
+    print(time.strftime('%Y-%m-%d %A %X %Z', time.localtime(time.time())))
 
 if __name__ == '__main__':
     main()
-    print(time.strftime('%Y-%m-%d %A %X %Z', time.localtime(time.time())))
 
 
 

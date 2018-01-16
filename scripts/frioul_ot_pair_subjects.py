@@ -69,17 +69,8 @@ def main():
     print(note)
 
     # cityblock sqeuclidian, minkowski
-    best_xst, ot_params,  params_acc = fucs.pairsubs_sinkhorn_lables_h(xs, ys, xt,
-                                                        ot_method=op_function, clf_method=clf_method)
-    reg_coor = np.log(params_acc['params'])
-    zero_coor = reg_coor[params_acc['acc']==0]
-    other_coor = reg_coor[params_acc['acc']!=0]
-    plt.figure(figsize=(9,5))
-    plt.plot(zero_coor[:,0],zero_coor[:,1], '+r', label='acc is 0.5')
-    plt.plot(other_coor[:0], other_coor[:,1], 'ob', label='acc not 0.5')
-    plt.legend(loc=0)
-    plt.title(note)
-    plt.savefig(main_dir + '/figs/{}.png'.format(note))
+    best_xst, ot_params, params_acc = fucs.pairsubs_sinkhorn_lables_h(xs, ys, xt,
+                                                                      ot_method=op_function, clf_method=clf_method)
 
     # train on xst, test on xt
     ot_accs = fucs.get_accuracy(best_xst, ys, xt, yt, clf_method=clf_method)
@@ -110,6 +101,7 @@ def main():
     pair_params['base_accs'] = base_accs
     pair_params['base_score'] = round(base_score, 4)
     pair_params['params'] = ot_params
+    pair_params['params_acc'] = params_acc
     ttest_base_ot = stats.ttest_rel(base_accs,ot_accs)
     pair_params['ttest'] = (ttest_base_ot.pvalue, ttest_base_ot.statistic)
     print('pair_params', pair_params)
@@ -123,16 +115,16 @@ def main():
         joblib.dump(pair_params, result_dir + '/big_ori/{}_pair_params.pkl'.format(note))
     else:
         joblib.dump(pair_params, result_dir + '/small_ori/{}_pair_params.pkl'.format(note))
+    reg_coor = np.log10(params_acc['params'])
+    zero_coor = reg_coor[params_acc['acc'] == 0]
+    other_coor = reg_coor[params_acc['acc'] != 0]
 
-    # if ttest.statistic > 0 and ttest.pvalue < 0.05:
-    #     joblib.dump(pair_params, result_dir+'/big_ori/{}_pair_params.pkl'.format(note))
-    # elif ttest.statistic > 0 and ttest.pvalue >= 0.05:
-    #     joblib.dump(pair_params, result_dir + '/big_ori_non_significant/{}_pair_params.pkl'.format(note))
-    # elif ttest.statistic <= 0 and ttest.pvalue >= 0.05:
-    #     joblib.dump(pair_params, result_dir + '/big_ot_non_significant/{}_pair_params.pkl'.format(note))
-    # else:
-    #     joblib.dump(pair_params, result_dir + '/big_ot/{}_pair_params.pkl'.format(note))
-
+    plt.figure(figsize=(9, 5))
+    plt.plot(zero_coor[:, 0], zero_coor[:, 1], '+r', label='acc is 0.5')
+    plt.plot(other_coor[:, 0], other_coor[:, 1], 'ob', label='acc not 0.5')
+    plt.legend(loc=0)
+    plt.title(note)
+    plt.savefig(main_dir + '/figs/{}.png'.format(note))
     print('-----------------------------------------------------------------------------------------')
     # print(scores_params)
     # note = '{}s_{}ts_{}_{}_{}_sinkhorn_{}_{}'.format(i, len(target_ids), experiment,
