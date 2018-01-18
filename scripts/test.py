@@ -12,123 +12,103 @@ from model import procedure_function as fucs
 
 from sklearn.externals import joblib
 import scipy.stats as stats
+from sklearn.metrics import accuracy_score
 import numpy as np
 import time
+
 import ot
+
+import matplotlib.pyplot as plt
 
 print(time.strftime('%Y-%m-%d %A %X %Z', time.localtime(time.time())))
 
-def main():
-    main_dir = os.path.split(os.getcwd())[0]
-    result_dir = main_dir + '/results'
 
-    # args = sys.argv[1:]
-    # experiment = args[0]
-    # nor_method = args[1]
-    # clf_method = args[2]
-    # source_id = int(args[3])
-    # target_id = int(args[4])
-    # op_function = args[5] # 'lpl1' 'l1l2' 'maplin'
+main_dir = os.path.split(os.getcwd())[0]
+result_dir = main_dir + '/results'
 
+# args = sys.argv[1:]
+# experiment = args[0]
+# nor_method = args[1]
+# clf_method = args[2]
+# source_id = int(args[3])
+# target_id = int(args[4])
+# op_function = args[5] # 'lpl1' 'l1l2'
 
+metric_xst = 'null'
 
-    experiment = 'fmril'
-    nor_method = 'indi'
-    clf_method = 'svm'
-    source_id = 3
-    target_id = 2
-    op_function = 'maplin' # 'lpl1' 'l1l2'
+experiment = 'fmril'
+nor_method = 'no'
+clf_method = 'logis'
+source_id = 1
+target_id = 2
+op_function = 'l1l2' # 'lpl1' 'l1l2'
 
-    if experiment == 'fmril':
-        source = fmril
-    elif experiment == 'fmrir':
-        source = fmrir
-    else:
-        source = meg
+if experiment == 'fmril':
+    source = fmril
+elif experiment == 'fmrir':
+    source = fmrir
+else:
+    source = meg
 
-    result_dir = result_dir + '/{}'.format(experiment)
-    y_target = source.y_target
-    subjects = np.array(source.subjects)
-    x_data = source.x_data_pow if experiment == 'meg' else source.x_data
-    x_indi = source.x_indi_pow if experiment == 'meg' else source.x_indi
-    x = x_indi if nor_method == 'indi' else x_data
+result_dir = result_dir + '/{}'.format(experiment)
+y_target = source.y_target
+subjects = np.array(source.subjects)
+x_data = source.x_data_pow if experiment == 'meg' else source.x_data
+x_indi = source.x_indi_pow if experiment == 'meg' else source.x_indi
+x = x_indi.copy() if nor_method == 'indi' else x_data.copy()
 
-    indices_sub = fucs.split_subjects(subjects)
+indices_sub = fucs.split_subjects(subjects)
+nb_subs = len(indices_sub)
 
-    i = source_id
-    j = target_id
-    xs = x[indices_sub[i]]
-    ys = y_target[indices_sub[i]]
-    xt = x[indices_sub[j]]
-    yt = y_target[indices_sub[j]]
-    note = 'kfold_{}s_{}t_{}_{}_{}_{}_circulaire'.format(i, j, experiment,
-                                           nor_method, clf_method, op_function)
-    print(note)
+i = source_id
+j = target_id
+xs = x[indices_sub[i]]
+ys = y_target[indices_sub[i]]
+xt = x[indices_sub[j]]
+yt = y_target[indices_sub[j]]
+x_pos = np.vstack((xs[ys==1],xt[yt==1]))
+x_neg = np.vstack((xs[ys==0],xt[yt==0]))
+b_pos = np.empty(x_pos.shape)
+b_neg = np.empty(x_neg.shape)
 
-    best_params, params_acc = fucs.pairsubs_circular_kfold(xs, ys, xt, yt, ot_method=op_function, clf_method=clf_method)
-    reg, eta = best_params
-    print('best reg and eta', reg, eta)
-    if op_function == 'l1l2':
-        transport = ot.da.SinkhornL1l2Transport(reg_e=reg, reg_cl=eta, norm='max')
-    elif op_function == 'lpl1':
-        transport = ot.da.SinkhornLpl1Transport(reg_e=reg, reg_cl=eta, norm='max')
-    elif op_function == 'maplin':
-        transport = ot.da.MappingTransport(kernel="linear", mu=reg, eta=eta, bias=True, norm='max')
-    else:
-        print('Warning: need to choose among "l1l2", "lpl1" and "maplin"', op_function)
-    # train on xst, test on xt
-    transport.fit(Xs=xs, Xt=xt, ys=ys)
-    xst = transport.transform(Xs=xs)
-    ot_accs = fucs.get_accuracy(xst, ys, xt, yt, clf_method=clf_method)
-    ot_score = np.mean(ot_accs)
-    print('train on ot source data, predict on original target, accuracy', ot_score, ot_accs)
+for i in range(x_pos.shape[0]):
+    data = x_pos[i] - np.min(x_pos[i])
+    data /= np.sum(data)
+    b_pos[i] = data
+for i in range(x_neg.shape[0]):
+    data = x_neg[i] - np.min(x_neg[i])
+    data /= np.sum(data)
+    b_neg[i] = data
+b_pos = np.transpose(b_pos)
+b_neg = np.transpose(b_neg)
+# pos_distributions = b_pos.shape[1]
+# neg_distributions = b_neg.shape[1]
+# loss matrix + normalization
+M_pos = ot.utils.dist0(b_pos.shape[0])
+M_pos = np.sqrt(M_pos)
+M_pos /= np.median(M_pos)
+M_neg = ot.utils.dist0(b_neg.shape[0])
+M_neg = np.sqrt(M_neg)
+M_neg /= np.median(M_neg)
+alpha = 1/b_neg.shape[1]  # 0<=alpha<=1
+weights = np.ones(b_neg.shape[1]) * alpha
+# l2bary
+# bary_l2 = B.dot(weights)
+# wasserstein
+reg = 1/800
+bw_pos, log = ot.bregman.barycenter(b_pos, M_pos, reg, weights,
+                                       numItermax=100, log=True)
+bw_neg, log = ot.bregman.barycenter(b_neg, M_neg, reg, weights,
+                                       numItermax=100, log=True)
+for j in range(3,10):
+    x_test = xs = x[indices_sub[j]]
+    y_test = y_target[indices_sub[j]]
+    dists=[]
+    for i in range(x_test.shape[0]):
+        dist_pos = np.linalg.norm(x_test[i] - bw_pos)
+        dist_neg = np.linalg.norm(x_test[i] - bw_neg)
+        print(dist_pos, dist_neg)
+        dists.append(1) if dist_pos<dist_neg else dists.append(0)
 
-    # train on xs, test on xt
-    ori_accs = fucs.get_accuracy(xs, ys, xt, yt, clf_method=clf_method)
-    ori_score = np.mean(ori_accs)
-    print('train on original source data, predict on original target, accuracy', ori_score, ori_accs)
-    # train on xs indi-nor, test on xt indi-nor
-    x_base = x_indi.copy()
-    xs_base = x_base[indices_sub[i]]
-    ys_base = y_target[indices_sub[i]]
-    xt_base = x_base[indices_sub[j]]
-    yt_base = y_target[indices_sub[j]]
-    base_accs = fucs.get_accuracy(xs_base, ys_base, xt_base, yt_base, clf_method=clf_method)
-    base_score = np.mean(base_accs)
-    print('base: indi-normalized source predicts on indi-normalized target, accuracy', base_score, base_accs)
-
-    pair_params = {}
-    pair_params['source'] = i
-    pair_params['target'] = j
-    pair_params['ori_score'] = round(ori_score, 4)
-    pair_params['ori_accs'] = ori_accs
-    pair_params['ot_accs'] = ot_accs
-    pair_params['ot_score'] = round(ot_score, 4)
-    pair_params['base_accs'] = base_accs
-    pair_params['base_score'] = round(base_score, 4)
-    pair_params['params'] = (reg, eta)
-    pair_params['params_acc'] = params_acc
-    ttest_base_ot = stats.ttest_rel(base_accs,ot_accs)
-    pair_params['ttest_base_ot'] = (ttest_base_ot.pvalue, ttest_base_ot.statistic)
-    ttest_ori_ot = stats.ttest_rel(ori_accs, ot_accs)
-    pair_params['ttest_ori_ot'] = (ttest_ori_ot.pvalue, ttest_ori_ot.statistic)
-    print('pair_params', pair_params)
-    # if ttest_base_ot .statistic > 0:
-    #     joblib.dump(pair_params, result_dir+'/big_base/{}_pair_params.pkl'.format(note))
-    # else:
-    #     joblib.dump(pair_params, result_dir + '/small_base/{}_pair_params.pkl'.format(note))
-    # if ttest_ori_ot .statistic > 0:
-    #     joblib.dump(pair_params, result_dir+'/big_ori/{}_pair_params.pkl'.format(note))
-    # else:
-    #     joblib.dump(pair_params, result_dir + '/small_ori/{}_pair_params.pkl'.format(note))
-
-
-    print(time.strftime('%Y-%m-%d %A %X %Z', time.localtime(time.time())))
-
-if __name__ == '__main__':
-    main()
-
-
-
-
-
+    acc = accuracy_score(y_test, dists)
+    print(j, acc)

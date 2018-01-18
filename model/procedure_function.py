@@ -162,11 +162,13 @@ def pairsubs_sinkhorn_lables_h(xs, ys, xt, ot_method='l1l2', clf_method='logis')
                     best_params = (reg,eta)
                     best_xst = xst
             elif best_dist > 0:
-                ttest = stats.ttest_rel(best_accs, accs)
-                if ttest.statistic < 0:
-                    best_accs = accs
-                    best_params = (reg, eta)
-                    best_xst = xst
+                if dist > 0:
+                    ttest = stats.ttest_rel(best_accs, accs)
+                    if ttest.statistic > 0:
+                        best_dist = dist
+                        best_accs = accs
+                        best_params = (reg, eta)
+                        best_xst = xst
     params_acc['params'] = np.asarray(params_acc['params'])
     params_acc['acc'] = np.asarray(params_acc['acc'])
     print('best reg and eta', best_params)
@@ -184,7 +186,7 @@ def h_divergence(xst, xt, clf_method='logis'):
     x = np.vstack((xst,xt))
     y = np.concatenate((y_xst,y_xt))
     accs = []
-    rskf = RepeatedStratifiedKFold(n_splits=10, n_repeats=5)
+    rskf = RepeatedStratifiedKFold(n_splits=10, n_repeats=1)
     for train, test in rskf.split(x, y):
         x_train = x[train]
         y_train = y[train]

@@ -4,11 +4,11 @@ import os
 dir = os.path.split(os.getcwd())[0]
 code_dir = dir + '/scripts'
 
-experiments = ['fmril']
+experiments = ['newfmri']
 data_methods = ['no'] #  'no'
 clf_methods = ['svm']
-source_ids = [i for i in range(10,65)]
-target_ids = [i for i in range(5)]
+source_ids = [i for i in range(2)]
+target_ids = [i for i in range(3)]
 op_function = 'l1l2'
 
 for experiment in experiments:

@@ -8,9 +8,12 @@ sys.path.append(main_dir)
 from data import fmri_data_cv as fmril
 from data import fmri_data_cv_rh as fmrir
 from data import meg_data_cv as meg
+from data import fmri_localizer as newfmri
 from model import procedure_function as fucs
-
+import matplotlib
+matplotlib.use('Agg')
 from sklearn.externals import joblib
+from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 import numpy as np
@@ -24,29 +27,31 @@ def main():
     main_dir = os.path.split(os.getcwd())[0]
     result_dir = main_dir + '/results'
 
-    args = sys.argv[1:]
-    experiment = args[0]
-    nor_method = args[1]
-    clf_method = args[2]
-    source_id = int(args[3])
-    target_id = int(args[4])
-    op_function = args[5] # 'lpl1' 'l1l2'
+    # args = sys.argv[1:]
+    # experiment = args[0]
+    # nor_method = args[1]
+    # clf_method = args[2]
+    # source_id = int(args[3])
+    # target_id = int(args[4])
+    # op_function = args[5] # 'lpl1' 'l1l2'
 
     metric_xst = "h"
 
-    # experiment = 'fmril'
-    # nor_method = 'no'
-    # clf_method = 'svm'
-    # source_id = 1
-    # target_id = 2
-    # op_function = 'l1l2' # 'lpl1' 'l1l2'
+    experiment = 'newfmri'
+    nor_method = 'no'
+    clf_method = 'svm'
+    source_id = 1
+    target_id = 2
+    op_function = 'l1l2' # 'lpl1' 'l1l2'
 
     if experiment == 'fmril':
         source = fmril
     elif experiment == 'fmrir':
         source = fmrir
-    else:
+    elif experiment == 'meg':
         source = meg
+    else:
+        source = newfmri
 
     result_dir = result_dir + '/{}'.format(experiment)
     y_target = source.y_target
@@ -57,14 +62,16 @@ def main():
 
     indices_sub = fucs.split_subjects(subjects)
     nb_subs = len(indices_sub)
-
+    pca = PCA(n_components=144)
     i = source_id
     j = target_id
     xs = x[indices_sub[i]]
+    xs_pca = pca.fit_transform(xs)
     ys = y_target[indices_sub[i]]
     xt = x[indices_sub[j]]
+    xt_pca = pca.fit_transform(xt)
     yt = y_target[indices_sub[j]]
-    note = 'h_{}s_{}t_{}_{}_{}_{}'.format(i, j, experiment,
+    note = 'new_pca_h_{}s_{}t_{}_{}_{}_{}'.format(i, j, experiment,
                                                  nor_method, clf_method, op_function)
     print(note)
 
@@ -118,13 +125,23 @@ def main():
     reg_coor = np.log10(params_acc['params'])
     zero_coor = reg_coor[params_acc['acc'] == 0]
     other_coor = reg_coor[params_acc['acc'] != 0]
-
     plt.figure(figsize=(9, 5))
+    plt.subplot(1, 2, 1)
     plt.plot(zero_coor[:, 0], zero_coor[:, 1], '+r', label='acc is 0.5')
     plt.plot(other_coor[:, 0], other_coor[:, 1], 'ob', label='acc not 0.5')
     plt.legend(loc=0)
     plt.title(note)
-    plt.savefig(main_dir + '/figs/{}.png'.format(note))
+
+    plt.subplot(1, 2, 2)
+    accs = params_acc['acc'].reshape((6, 6))
+    accs2 = np.empty((accs.T.shape))
+    for k in range(accs.shape[0]):
+        accs2[:, k] = accs[k][::-1]
+
+    plt.imshow(accs2)
+    plt.colorbar()
+    plt.title('imshow')
+    plt.savefig(main_dir + '/figs/acc_imshow_{}.png'.format(note))
     print('-----------------------------------------------------------------------------------------')
     # print(scores_params)
     # note = '{}s_{}ts_{}_{}_{}_sinkhorn_{}_{}'.format(i, len(target_ids), experiment,

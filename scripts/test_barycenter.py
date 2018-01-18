@@ -14,7 +14,7 @@ from sklearn.externals import joblib
 import scipy.stats as stats
 import numpy as np
 import time
-
+import scipy.io
 import ot
 
 import matplotlib.pyplot as plt
@@ -65,7 +65,7 @@ xs = x[indices_sub[i]]
 ys = y_target[indices_sub[i]]
 xt = x[indices_sub[j]]
 
-A = fmril.x_data
+A = fmril.x_data[:80]
 B = np.empty(A.shape)
 for i in range(A.shape[0]):
     data = A[i] - np.min(A[i])
@@ -86,4 +86,26 @@ reg = 1/800
 bary_wass, log = ot.bregman.barycenter(B, M, reg, weights,
                                        numItermax=100, log=True)
 print(log)
-np.savez(result_dir + '/fmril_no_iter100_reg800.npz', bary_l2=bary_l2, bary_wass=bary_wass)
+np.savez(result_dir + '/fmril_no_1s_2t_iter100_reg800.npz', bary_l2=bary_l2, bary_wass=bary_wass)
+
+
+arti_data = scipy.io.loadmat('/hpc/crise/wang.q/data/artificial_data.mat')
+arti = arti_data['x']
+arti = arti.reshape((80, 60*90))
+
+arti_dis = np.empty(arti.shape)
+for i in range(arti.shape[0]):
+    data = arti[i] - np.min(arti[i])
+    data /= np.sum(data)
+    arti_dis[i] = data
+arti_dis = np.transpose(arti_dis)
+M = ot.utils.dist0(arti_dis.shape[0])
+M = np.sqrt(M)
+M /= np.median(M)
+alpha = 1/arti_dis.shape[1]  # 0<=alpha<=1
+weights = np.ones(arti_dis.shape[1]) * alpha
+bary_l2 = arti_dis.dot(weights)
+# wasserstein
+reg = 1/800
+bary_wass, log = ot.bregman.barycenter(arti_dis, M, reg, weights,
+                                       numItermax=100, log=True)
