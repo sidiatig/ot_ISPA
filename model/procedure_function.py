@@ -121,7 +121,6 @@ def gridsearch_persub(xs, ys, xt, yt, clf_method='logis',njobs=3):
     return grid_best, grid_csv, score_op, pre
 
 
-
 def pairsubs_sinkhorn_lables_h(xs, ys, xt, ot_method='l1l2', clf_method='logis'):
     # metric:  ‘braycurtis’, ‘canberra’, ‘chebyshev’, ‘cityblock’, ‘correlation’,
     # ‘cosine’, ‘dice’, ‘euclidean’, ‘hamming’, ‘jaccard’, ‘kulsinski’,
